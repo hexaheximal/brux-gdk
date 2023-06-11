@@ -1,0 +1,47 @@
+#!/bin/sh
+#  Bruxbot - backend/bruxbot-clean
+#  Copyright (C) 2023 hexaheximal
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU Affero General Public License as published by
+#  the Free Software Foundation, either version 3 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU Affero General Public License for more details.
+#
+#  You should have received a copy of the GNU Affero General Public License
+#  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# NOTE: You probably want to use bruxbotd, not this.
+# TODO: implement musl support
+
+set -e
+
+BRUXBOT=${BRUXBOT:-$HOME/.bruxbot}
+TARGET=${TARGET:-x86_64-linux-gnu}
+FLAVOR=${FLAVOR:-generic}
+
+# make sure that the things we need exist
+
+if [ ! -d ${BRUXBOT}/toolchain/${TARGET}-${FLAVOR} ]
+then
+	echo "Target toolchain directory appears to not exist. Exiting."
+	exit 1
+fi
+
+if [ ! -d ${BRUXBOT}/packages/${TARGET}-${FLAVOR} ]
+then
+	echo "Target packages directory appears to not exist - This means that it's already cleaned. Exiting."
+	exit 1
+fi
+
+echo "Using workdir: ${BRUXBOT}"
+
+echo "Cleaning target ${TARGET}-${FLAVOR}..."
+
+rm -rf ${BRUXBOT}/packages/${TARGET}-${FLAVOR}
+
+echo "Finished!"

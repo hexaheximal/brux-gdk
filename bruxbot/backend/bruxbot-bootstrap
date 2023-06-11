@@ -1,0 +1,315 @@
+#!/bin/sh
+#  Bruxbot - backend/bruxbot-bootstrap
+#  Copyright (C) 2023 hexaheximal
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU Affero General Public License as published by
+#  the Free Software Foundation, either version 3 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU Affero General Public License for more details.
+#
+#  You should have received a copy of the GNU Affero General Public License
+#  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# NOTE: You probably want to use bruxbotd, not this.
+# TODO: implement musl support
+
+set -e
+
+BRUXBOT=${BRUXBOT:-$HOME/.bruxbot}
+BRUX_REPOSITORY=${BRUX_REPOSITORY:-$(realpath ..)}
+ORIGINAL_CWD=`pwd`
+TARGET=${TARGET:-x86_64-linux-gnu}
+FLAVOR=${FLAVOR:-generic}
+BRUXBOT_TOOLCHAIN=${BRUXBOT}/toolchain/${TARGET}-${FLAVOR}
+
+# Mirrors
+
+GNU_MIRROR=${GNU_MIRROR:-https://ftp.gnu.org/gnu}
+
+# gcc & binutils dependencies
+
+GMP_VERSION=${GMP_VERSION:-6.2.1}
+MPC_VERSION=${MPC_VERSION:-1.3.1}
+MPFR_VERSION=${MPFR_VERSION:-4.2.0}
+
+# the actual toolchain itself
+
+GCC_VERSION=${GCC_VERSION:-13.1.0}
+GLIBC_VERSION=${GLIBC_VERSION:-2.37}
+BINUTILS_VERSION=${BINUTILS_VERSION:-2.40}
+
+# brux-gdk dependencies
+
+SDL2_VERSION=${SDL2_VERSION:-2.26.5}
+SDL2_IMAGE_VERSION=${SDL2_IMAGE_VERSION:-2.6.3}
+SDL2_MIXER_VERSION=${SDL2_MIXER_VERSION:-2.6.3}
+SDL2_GFX_VERSION=${SDL2_GFX_VERSION:-1.0.4}
+
+# util functions
+
+require_tarball () {
+	URL=$1
+	FILENAME=$2
+
+	if [ ! -f ${BRUXBOT}/tarballs/${FILENAME} ]
+	then
+		echo "Downloading ${FILENAME}..."
+
+		wget ${URL} -O ${BRUXBOT}/tarballs/${FILENAME}
+	fi
+}
+
+extract_tarball () {
+	FILENAME=$1
+	FROM=$2
+	TO=$3
+
+	if [ ! -d ${BRUXBOT}/packages/${TARGET}-${FLAVOR}/${TO} ]
+	then
+		echo "Extracting ${FILENAME}..."
+
+		tar -xf ${BRUXBOT}/tarballs/${FILENAME} -C ${BRUXBOT}/packages/${TARGET}-${FLAVOR}
+
+		if [ ${FROM} != ${TO} ]
+		then
+			mv ${BRUXBOT}/packages/${TARGET}-${FLAVOR}/${FROM} ${BRUXBOT}/packages/${TARGET}-${FLAVOR}/${TO}
+		fi
+	fi
+}
+
+# attempt to figure out if the repository directory is valid
+
+if [ -d ${BRUX_REPOSITORY}/.git ] && [ -d ${BRUX_REPOSITORY}/rte ]
+then
+	echo "Using repository: ${BRUX_REPOSITORY}" 
+else
+	echo "Please set the BRUX_REPOSITORY environment variable to a valid brux-gdk repository path."
+fi
+
+# create the working directory if it doesn't already exist
+
+if [ ! -d ${BRUXBOT} ]
+then
+	mkdir -p ${BRUXBOT}
+fi
+
+if [ ! -d ${BRUXBOT}/tarballs ]
+then
+	mkdir ${BRUXBOT}/tarballs
+fi
+
+if [ ! -d ${BRUXBOT}/toolchain ]
+then
+	mkdir ${BRUXBOT}/toolchain
+fi
+
+if [ ! -d ${BRUXBOT}/toolchain/${TARGET}-${FLAVOR} ]
+then
+	mkdir ${BRUXBOT}/toolchain/${TARGET}-${FLAVOR}
+fi
+
+if [ ! -d ${BRUXBOT}/packages ]
+then
+	mkdir ${BRUXBOT}/packages
+fi
+
+if [ ! -d ${BRUXBOT}/packages/${TARGET}-${FLAVOR} ]
+then
+	mkdir ${BRUXBOT}/packages/${TARGET}-${FLAVOR}
+fi
+
+echo "Using workdir: ${BRUXBOT}"
+
+# *Finally* start building things
+
+echo "Figuring out what we need to build..."
+
+cd ${BRUXBOT}/packages/${TARGET}-${FLAVOR}
+
+if [ ! -f ${BRUXBOT_TOOLCHAIN}/lib/libgmp.so ]
+then
+	require_tarball ${GNU_MIRROR}/gmp/gmp-${GMP_VERSION}.tar.xz gmp-${GMP_VERSION}.tar.xz
+	extract_tarball gmp-${GMP_VERSION}.tar.xz gmp-${GMP_VERSION} gmp
+	
+	echo "Building gmp..."
+	cd gmp
+	./configure --prefix=${BRUXBOT_TOOLCHAIN}
+	make -j$(nproc)
+	make install
+	cd ..
+fi
+
+if [ ! -f ${BRUXBOT_TOOLCHAIN}/lib/libmpfr.so ]
+then
+	require_tarball ${GNU_MIRROR}/mpfr/mpfr-${MPFR_VERSION}.tar.gz mpfr-${MPFR_VERSION}.tar.gz
+	extract_tarball mpfr-${MPFR_VERSION}.tar.gz mpfr-${MPFR_VERSION} mpfr
+	
+	echo "Building mpfr..."
+	cd mpfr
+	./configure --prefix=${BRUXBOT_TOOLCHAIN} --with-gmp=${BRUXBOT_TOOLCHAIN}
+	make -j$(nproc)
+	make install
+	cd ..
+fi
+
+if [ ! -f ${BRUXBOT_TOOLCHAIN}/lib/libmpc.so ]
+then
+	require_tarball ${GNU_MIRROR}/mpc/mpc-${MPC_VERSION}.tar.gz mpc-${MPC_VERSION}.tar.gz
+	extract_tarball mpc-${MPC_VERSION}.tar.gz mpc-${MPC_VERSION} mpc
+	
+	echo "Building mpc..."
+	cd mpc
+	./configure --prefix=${BRUXBOT_TOOLCHAIN} --with-gmp=${BRUXBOT_TOOLCHAIN} --with-mpfr=${BRUXBOT_TOOLCHAIN}
+	make -j$(nproc)
+	make install
+	cd ..
+fi
+
+if [ ! -f ${BRUXBOT_TOOLCHAIN}/lib/libc.so ]
+then
+	require_tarball ${GNU_MIRROR}/glibc/glibc-${GLIBC_VERSION}.tar.gz glibc-${GLIBC_VERSION}.tar.gz
+	extract_tarball glibc-${GLIBC_VERSION}.tar.gz glibc-${GLIBC_VERSION} glibc
+	
+	echo "Building glibc..."
+	cd glibc
+
+	if [ ! -d build ]
+	then
+		mkdir build
+	fi
+
+	cd build
+
+	../configure --target=${TARGET} --prefix=${BRUXBOT_TOOLCHAIN}
+	make -j$(nproc)
+	make install
+
+	cd ../..
+fi
+
+if [ ! -f ${BRUXBOT_TOOLCHAIN}/bin/${TARGET}-gcc ]
+then
+	require_tarball ${GNU_MIRROR}/gcc/gcc-${GCC_VERSION}/gcc-${GCC_VERSION}.tar.gz gcc-${GCC_VERSION}.tar.gz
+	extract_tarball gcc-${GCC_VERSION}.tar.gz gcc-${GCC_VERSION} gcc
+
+	echo "Building gcc..."
+
+	cd gcc
+
+	if [ ! -d build ]
+	then
+		mkdir build
+	fi
+
+	cd build
+
+	../configure --target=${TARGET} --prefix=${BRUXBOT_TOOLCHAIN} --with-gmp=${BRUXBOT_TOOLCHAIN} --with-mpfr=${BRUXBOT_TOOLCHAIN} --with-mpc=${BRUXBOT_TOOLCHAIN} --disable-multilib --enable-languages=c,c++ --with-cpu=${FLAVOR}
+	make -j$(nproc)
+	make install
+
+	cd ../..
+fi
+
+if [ ! -f ${BRUXBOT_TOOLCHAIN}/bin/${TARGET}-objdump ]
+then
+	require_tarball ${GNU_MIRROR}/binutils/binutils-${BINUTILS_VERSION}.tar.gz binutils-${BINUTILS_VERSION}.tar.gz
+	extract_tarball binutils-${BINUTILS_VERSION}.tar.gz binutils-${BINUTILS_VERSION} binutils
+
+	echo "Building binutils..."
+
+	cd binutils
+
+	if [ ! -d build ]
+	then
+		mkdir build
+	fi
+
+	cd build
+
+	../configure --target=${TARGET} --prefix=${BRUXBOT_TOOLCHAIN} --with-gmp=${BRUXBOT_TOOLCHAIN} --with-mpfr=${BRUXBOT_TOOLCHAIN} --with-mpc=${BRUXBOT_TOOLCHAIN} --disable-multilib --enable-languages=c,c++ --with-cpu=${FLAVOR}
+	make -j$(nproc)
+	make install
+
+	cd ../..
+fi
+
+# Create the cmake toolchain file if it doesn't already exist
+
+if [ ! -f ${BRUXBOT_TOOLCHAIN}/toolchain.cmake ]
+then
+	echo "Creating CMake toolchain file..."
+	printf "# Set the system name to Linux\n\nset(CMAKE_SYSTEM_NAME Linux)\n\n# Change the compiler name\n\nset(CMAKE_C_COMPILER ${TARGET}-gcc)\nset(CMAKE_CXX_COMPILER ${TARGET}-g++)\n\nset(CMAKE_FIND_ROOT_PATH ${BRUXBOT_TOOLCHAIN})\n\n# Make sure that we only use things in the toolchain directory\n\nset(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)\nset(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)\nset(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)" > ${BRUXBOT_TOOLCHAIN}/toolchain.cmake
+fi
+
+if [ ! -d ${BRUXBOT_TOOLCHAIN}/lib/libSDL2.so ]
+then
+	echo "Building SDL2..."
+
+	require_tarball https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/SDL2-${SDL2_VERSION}.tar.gz SDL2-${SDL2_VERSION}.tar.gz
+	extract_tarball SDL2-${SDL2_VERSION}.tar.gz SDL2-${SDL2_VERSION} sdl2
+
+	cd sdl2
+
+	./configure --prefix=${BRUXBOT_TOOLCHAIN} --host=${TARGET}
+	make
+	make install
+
+	cd ..
+fi
+
+if [ ! -d ${BRUXBOT_TOOLCHAIN}/lib/libSDL2_image.so ]
+then
+	echo "Building SDL2_image..."
+
+	require_tarball https://github.com/libsdl-org/SDL_image/releases/download/release-${SDL2_IMAGE_VERSION}/SDL2_image-${SDL2_IMAGE_VERSION}.tar.gz SDL2_image-${SDL2_IMAGE_VERSION}.tar.gz
+	extract_tarball SDL2_image-${SDL2_IMAGE_VERSION}.tar.gz SDL2_image-${SDL2_IMAGE_VERSION} sdl2-image
+
+	cd sdl2-image
+
+	./configure --prefix=${BRUXBOT_TOOLCHAIN} --host=${TARGET}
+	make
+	make install
+
+	cd ..
+fi
+
+if [ ! -d ${BRUXBOT_TOOLCHAIN}/lib/libSDL2_mixer.so ]
+then
+	echo "Building SDL2_mixer..."
+
+	require_tarball https://github.com/libsdl-org/SDL_mixer/releases/download/release-${SDL2_MIXER_VERSION}/SDL2_mixer-${SDL2_MIXER_VERSION}.tar.gz SDL2_mixer-${SDL2_MIXER_VERSION}.tar.gz
+	extract_tarball SDL2_mixer-${SDL2_MIXER_VERSION}.tar.gz SDL2_mixer-${SDL2_MIXER_VERSION} sdl2-mixer
+
+	cd sdl2-mixer
+
+	./configure --prefix=${BRUXBOT_TOOLCHAIN} --host=${TARGET}
+	make
+	make install
+
+	cd ..
+fi
+
+if [ ! -d ${BRUXBOT_TOOLCHAIN}/lib/libSDL2_gfx.so ]
+then
+	echo "Building SDL2_gfx..."
+
+	require_tarball https://sourceforge.net/projects/sdl2gfx/files/SDL2_gfx-${SDL2_GFX_VERSION}.tar.gz/download SDL2_gfx-${SDL2_GFX_VERSION}.tar.gz
+	extract_tarball SDL2_gfx-${SDL2_GFX_VERSION}.tar.gz SDL2_gfx-${SDL2_GFX_VERSION} sdl2-gfx
+
+	cd sdl2-gfx
+
+	./configure --prefix=${BRUXBOT_TOOLCHAIN} --host=${TARGET}
+	make
+	make install
+
+	cd ..
+fi
+
+cd ${ORIGINAL_CWD}
+
+echo "Finished!"
